@@ -59,10 +59,10 @@ private:
     // Thread to run network on
     std::thread _thread;
 
-    std::mutex locker;
+    std::mutex lock;
     std::condition_variable notifier;
     std::set<int> client_sockets;
-    std::size_t MAX_THREADS;
+    std::size_t max_threads;
 };
 
 } // namespace MTblocking

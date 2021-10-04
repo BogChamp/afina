@@ -28,10 +28,13 @@ namespace Network {
 namespace MTblocking {
 
 // See Server.h
-ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl), threads_working{0} {}
+ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl) {}
 
 // See Server.h
-ServerImpl::~ServerImpl() {}
+ServerImpl::~ServerImpl() {
+    Stop();
+    Join();
+}
 
 // See Server.h
 void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
@@ -73,13 +76,13 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    MAX_THREADS = n_workers;
+    max_threads = n_workers;
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
 // See Server.h
 void ServerImpl::Stop() {
-    std::unique_lock<std::mutex> lock(locker);
+    std::unique_lock<std::mutex> locker(lock);
     running.store(false);
     shutdown(_server_socket, SHUT_RDWR);
     for (auto &socket: client_sockets) {
@@ -89,7 +92,7 @@ void ServerImpl::Stop() {
 
 // See Server.h
 void ServerImpl::Join() {
-    std::unique_lock<std::mutex> lock(locker);
+    std::unique_lock<std::mutex> locker(lock);
     while(!client_sockets.empty() || running.load()) {
         notifier.wait(lock);
     }
@@ -136,8 +139,8 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-        std::lock_guard<std::mutex> lock(locker);
-        if (client_sockets.size() >= MAX_THREADS) {
+        std::lock_guard<std::mutex> locker(lock);
+        if (client_sockets.size() >= max_threads) {
             close(client_socket);
             _logger->warn("thread limit reached");
         } else {
@@ -159,7 +162,7 @@ void ServerImpl::Connection(int client_socket) {
 
     try {
         int readed_bytes = -1;
-        char client_buffer[4096];
+        char client_buffer[4096] = "";
         while ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
 
@@ -237,7 +240,7 @@ void ServerImpl::Connection(int client_socket) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
 
-    std::unique_lock<std::mutex> lock(locker);
+    std::unique_lock<std::mutex> locker(lock);
     client_sockets.erase(client_socket);
     close(client_socket);
     if (!running.load() && client_sockets.empty()) {
